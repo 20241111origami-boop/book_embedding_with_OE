@@ -11,11 +11,12 @@
 ## 2. セットアップ
 
 ```bash
-pip install openevolve
+pip install openevolve cerebras-cloud-sdk
 export CEREBRAS_API_KEY="your-secret"
-# OpenEvolveはOPENAI_API_KEY環境変数を参照するため橋渡し
-export OPENAI_API_KEY="$CEREBRAS_API_KEY"
 ```
+
+OpenAI互換エンドポイントではなく、`cerebras.cloud.sdk` を直接使う場合は
+`examples/book_embedding/cerebras_sdk_client.py` の `generate_code_suggestion()` を利用してください。
 
 ## 3. 実行
 
@@ -33,8 +34,10 @@ python openevolve-run.py \
   進化対象。`solve_instance(graph)` が spine順序とページ割当を返します。
 - `examples/book_embedding/evaluator.py`  
   各インスタンスで交差違反とページ数を測定し、`combined_score` を返します。
+- `examples/book_embedding/cerebras_sdk_client.py`  
+  `cerebras.cloud.sdk` で直接モデル呼び出しを行うユーティリティ。
 - `examples/book_embedding/config.yaml`  
-  Cerebras (`https://api.cerebras.ai/v1`) + `gpt-oss-120b` 設定。
+  `cerebras_sdk` + `gpt-oss-120b` 設定。
 - `examples/book_embedding/instances/*.json`  
   最小サンプルインスタンス。
 
@@ -51,4 +54,3 @@ python openevolve-run.py \
 - 実問題用のグラフを `examples/book_embedding/instances/` にJSONで追加
 - `config.yaml` の `max_iterations`, `population_size`, `num_islands` を拡張
 - `prompt.system_message` に問題固有のヒント（禁則・局所探索戦略）を追記
-
