@@ -54,3 +54,16 @@ python openevolve-run.py \
 - 実問題用のグラフを `examples/book_embedding/instances/` にJSONで追加
 - `config.yaml` の `max_iterations`, `population_size`, `num_islands` を拡張
 - `prompt.system_message` に問題固有のヒント（禁則・局所探索戦略）を追記
+
+## 7. 多様インスタンスの自動生成
+
+以下を実行すると、`known_optima.json` の主要キー群（path/cycle/star/tree/K_n/K_{p,q}/grid/wheel/prism/random）を実体化し、
+さらにseed固定のランダムグラフを追加して、合計約100件の評価インスタンスを再生成できます。
+
+```bash
+python tools/generate_instances.py
+```
+
+- 出力先: `examples/book_embedding/instances/*.json`
+- 付帯情報: `examples/book_embedding/instances_manifest.csv`（family/頂点数/辺数/密度/生成元）
+
