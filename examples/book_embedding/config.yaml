@@ -3,8 +3,8 @@ checkpoint_interval: 20
 random_seed: 42
 
 llm:
-  provider: "cerebras_sdk"
-  model: "gpt-oss-120b"
+  provider: "mistral_ai_studio"
+  model: "mistral-large-latest"
   temperature: 0.7
   max_tokens: 12000
   timeout: 120
