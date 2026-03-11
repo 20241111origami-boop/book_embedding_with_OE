@@ -3,9 +3,8 @@ checkpoint_interval: 20
 random_seed: 42
 
 llm:
-  primary_model: "gpt-oss-120b"
-  primary_model_weight: 1.0
-  api_base: "https://api.cerebras.ai/v1"
+  provider: "cerebras_sdk"
+  model: "gpt-oss-120b"
   temperature: 0.7
   max_tokens: 12000
   timeout: 120
