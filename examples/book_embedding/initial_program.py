@@ -20,6 +20,65 @@ def _crosses(e1, e2, pos):
     return (pa < pc < pb < pd) or (pc < pa < pd < pb)
 
 
+def _assign_pages(edges, pos):
+    """
+    Optimal greedy page assignment for a fixed vertex order.
+    Uses the interval‑right‑endpoint rule (optimal for permutation graphs).
+    Returns a list `edge_pages` aligned with the original edge list.
+    """
+    intervals = []
+    for idx, (u, v) in enumerate(edges):
+        l, r = sorted((pos[u], pos[v]))
+        intervals.append((l, r, idx))
+
+    intervals.sort(key=lambda x: x[1])          # sort by right endpoint
+
+    page_last_right = []                       # rightmost endpoint on each page
+    edge_pages = [-1] * len(edges)
+
+    for l, r, idx in intervals:
+        placed = False
+        for p, last_r in enumerate(page_last_right):
+            if l > last_r or r < last_r:        # disjoint or nested → same page
+                edge_pages[idx] = p
+                page_last_right[p] = max(page_last_right[p], r)
+                placed = True
+                break
+        if not placed:
+            edge_pages[idx] = len(page_last_right)
+            page_last_right.append(r)
+
+    return edge_pages
+
+
+def _assign_pages_conflict(edges, pos):
+    """
+    Greedy colouring of the crossing (conflict) graph.
+    Edges are processed in descending order of degree in the conflict graph.
+    Returns a list `edge_pages` aligned with the original edge list.
+    """
+    m = len(edges)
+    # build conflict sets
+    conflicts = [set() for _ in range(m)]
+    for i in range(m):
+        ei = edges[i]
+        for j in range(i + 1, m):
+            if _crosses(ei, edges[j], pos):
+                conflicts[i].add(j)
+                conflicts[j].add(i)
+
+    # order edges by decreasing number of conflicts
+    order = sorted(range(m), key=lambda i: -len(conflicts[i]))
+    edge_pages = [-1] * m
+    for e_idx in order:
+        used = {edge_pages[n] for n in conflicts[e_idx] if edge_pages[n] != -1}
+        p = 0
+        while p in used:
+            p += 1
+        edge_pages[e_idx] = p
+    return edge_pages
+
+
 def solve_instance(graph):
     """
     Returns a dictionary with:
@@ -29,27 +88,68 @@ def solve_instance(graph):
     n = int(graph["num_vertices"])
     edges = [tuple(e) for e in graph["edges"]]
 
-    # Simple baseline order: highest degree first, tie by vertex id.
-    degree = _build_degree(n, edges)
-    vertex_order = sorted(range(n), key=lambda x: (-degree[x], x))
+    # Greedy maximum‑adjacency vertex order (deterministic)
+    # Start with the highest‑degree vertex, then repeatedly add the vertex
+    # that has the most neighbours already placed (ties broken by degree then id).
+    adj = [[] for _ in range(n)]
+    for u, v in edges:
+        adj[u].append(v)
+        adj[v].append(u)
+
+    degree = [len(nei) for nei in adj]
+
+    placed = []
+    remaining = set(range(n))
+
+    # initial vertex: highest degree, smallest id on tie
+    start = max(remaining, key=lambda v: (degree[v], -v))
+    placed.append(start)
+    remaining.remove(start)
+
+    while remaining:
+        best = max(
+            remaining,
+            key=lambda v: (sum(1 for nb in adj[v] if nb in placed), degree[v], -v)
+        )
+        placed.append(best)
+        remaining.remove(best)
+
+    vertex_order = placed
     pos = {v: i for i, v in enumerate(vertex_order)}
 
-    # Greedy page assignment: first non-crossing page.
-    pages = defaultdict(list)  # page -> edge indices
-    edge_pages = [-1] * len(edges)
+    # Initial greedy page assignment – try both interval and conflict methods
+    pages_interval = _assign_pages(edges, pos)
+    pages_conflict = _assign_pages_conflict(edges, pos)
+    edge_pages = pages_interval if (max(pages_interval) <= max(pages_conflict)) else pages_conflict
 
-    for i, e in enumerate(edges):
-        assigned = False
-        for page, idx_list in pages.items():
-            if all(not _crosses(e, edges[j], pos) for j in idx_list):
-                edge_pages[i] = page
-                idx_list.append(i)
-                assigned = True
+    # ---------- Local vertex‑order improvement ----------
+    # Deterministic hill‑climbing: try all pairwise swaps and keep any that
+    # strictly reduce the number of pages.  Restart the search after each
+    # successful improvement.
+    improved = True
+    while improved:
+        improved = False
+        for i in range(n):
+            for j in range(i + 1, n):
+                # attempt swapping vertices i and j
+                vertex_order[i], vertex_order[j] = vertex_order[j], vertex_order[i]
+                pos_swapped = {v: idx for idx, v in enumerate(vertex_order)}
+                # evaluate both page‑assignment strategies for the swapped order
+                pages_int = _assign_pages(edges, pos_swapped)
+                pages_con = _assign_pages_conflict(edges, pos_swapped)
+                new_pages = pages_int if (max(pages_int) <= max(pages_con)) else pages_con
+
+                if max(new_pages) + 1 < max(edge_pages) + 1:   # fewer pages found
+                    edge_pages = new_pages
+                    pos = pos_swapped
+                    improved = True
+                    # keep this swap and restart the outer loop
+                    break
+                else:
+                    # revert swap
+                    vertex_order[i], vertex_order[j] = vertex_order[j], vertex_order[i]
+            if improved:
                 break
-        if not assigned:
-            new_page = len(pages)
-            pages[new_page].append(i)
-            edge_pages[i] = new_page
 
     return {"vertex_order": vertex_order, "edge_pages": edge_pages}
 
