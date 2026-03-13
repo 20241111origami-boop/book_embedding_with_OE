@@ -1,4 +1,4 @@
-# Book Embedding with OpenEvolve (Mistral AI Studio)
+# Book Embedding with OpenEvolve (OpenRouter BYOK)
 
 このリポジトリには、OpenEvolveで「ページ数最小化」のbook-embedding問題を進化させる最小雛形が入っています。
 
@@ -6,19 +6,28 @@
 
 - Python 3.10+
 - OpenEvolve
-- Mistral API Key（`MISTRAL_API_KEY`）
+- OpenRouter API Key（`OPENROUTER_API_KEY`）
 
 ## 2. セットアップ
 
 ```bash
 pip install openevolve
-export MISTRAL_API_KEY="your-secret"
+export OPENROUTER_API_KEY="your-secret"
 ```
 
 `examples/book_embedding/mistral_ai_studio_client.py` の `generate_code_suggestion()` は
-Mistral AI Studio API（`/v1/chat/completions`）を直接呼び出します。
+OpenRouter API（`/api/v1/chat/completions`）を直接呼び出します。
 
-このクライアントには **RPS=1 制約** を守るため、リクエスト間隔を最低1秒空けるレート制御を実装しています。
+このクライアントには **RPS制御 + 429/5xx時のモデル・フェイルオーバー** を実装しています。
+デフォルトの切り替え順は次の通りです。
+
+1. `cerebras/gpt-oss-120b`
+2. `groq/gpt-oss-120b`
+3. `z-ai/glm-4.7-flash`
+4. `google/gemini-3.1-flash-lite`
+5. `openrouter/hunter-alpha`
+
+必要なら `OPENROUTER_MODEL_CANDIDATES` で順序を上書きできます（カンマ区切り）。
 
 ## 3. 実行
 
@@ -37,21 +46,21 @@ python openevolve-run.py \
 - `examples/book_embedding/evaluator.py`  
   各インスタンスで交差違反とページ数を測定し、`combined_score` を返します。
 - `examples/book_embedding/mistral_ai_studio_client.py`  
-  Mistral AI Studio APIを直接呼び出すユーティリティ（RPS=1レート制御付き）。
+  OpenRouter APIを直接呼び出すユーティリティ（RPS制御 + 複数モデルフェイルオーバー）。
 - `examples/book_embedding/config.yaml`  
-  `mistral_ai_studio` + `mistral-large-latest` 設定。
+  OpenRouter BYOK設定。
 - `examples/book_embedding/instances/*.json`  
   最小サンプルインスタンス。
 
 ## 5. OpenEvolve本体側の補足
 
 OpenEvolve本体で `llm.provider` の値を固定で判定している場合は、
-`mistral_ai_studio` を許可する変更が必要です。
+`openrouter` または利用中のprovider名を許可する変更が必要です。
 
 - 例: provider名の許可リスト追加
-- 例: Mistral AI Studio用の呼び出しクライアントを既存provider分岐へ接続
+- 例: OpenRouter用の呼び出しクライアントを既存provider分岐へ接続
 
-本リポジトリ側では、その前提に合わせて `config.yaml` の provider名を `mistral_ai_studio` に変更しています。
+本リポジトリ側では、OpenRouter BYOKを使う前提で `config.yaml` のAPI設定をOpenRouter向けにしています。
 
 ## 6. 評価方針
 
