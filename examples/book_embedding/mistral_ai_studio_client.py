@@ -1,4 +1,4 @@
-"""Mistral AI Studio API caller for book embedding experiments."""
+"""OpenRouter chat completions caller with model failover support."""
 
 from __future__ import annotations
 
@@ -14,6 +14,15 @@ _MIN_REQUEST_INTERVAL_SECONDS = 2.0
 _rate_limit_lock = threading.Lock()
 _last_request_at = 0.0
 _consecutive_429_count = 0
+_model_cooldown_until: dict[str, float] = {}
+
+_DEFAULT_FALLBACK_MODELS = [
+    "cerebras/gpt-oss-120b",
+    "groq/gpt-oss-120b",
+    "z-ai/glm-4.7-flash",
+    "google/gemini-3.1-flash-lite",
+    "openrouter/hunter-alpha",
+]
 
 
 def _wait_for_rate_limit() -> None:
@@ -52,21 +61,61 @@ def _reset_429_backoff() -> None:
         _consecutive_429_count = 0
 
 
+def _parse_model_candidates(primary_model: Optional[str]) -> list[str]:
+    """Return ordered model candidates used for fallback routing."""
+
+    env_models = os.getenv("OPENROUTER_MODEL_CANDIDATES", "")
+    parsed = [m.strip() for m in env_models.split(",") if m.strip()]
+
+    if not parsed:
+        parsed = list(_DEFAULT_FALLBACK_MODELS)
+
+    if primary_model and primary_model not in parsed:
+        return [primary_model, *parsed]
+
+    return parsed
+
+
+def _next_available_models(model_candidates: list[str]) -> list[str]:
+    """Prioritize models that are not in cooldown, preserving order."""
+
+    now = time.monotonic()
+    available: list[str] = []
+    cooling: list[str] = []
+
+    with _rate_limit_lock:
+        for model in model_candidates:
+            cooldown_until = _model_cooldown_until.get(model, 0.0)
+            if cooldown_until <= now:
+                available.append(model)
+            else:
+                cooling.append(model)
+
+    return [*available, *cooling]
+
+
+def _mark_model_in_cooldown(model: str, seconds: int) -> None:
+    """Mark a model unavailable until cooldown elapses."""
+
+    with _rate_limit_lock:
+        _model_cooldown_until[model] = time.monotonic() + seconds
+
+
 def generate_code_suggestion(
     user_prompt: str,
     *,
     system_prompt: Optional[str] = None,
-    model: str = "mistral-large-latest",
+    model: str = "cerebras/gpt-oss-120b",
     temperature: float = 0.7,
     max_tokens: int = 12_000,
 ) -> str:
-    """Generate a response using the Mistral AI Studio chat completions API."""
+    """Generate a response via OpenRouter, failing over on 429/5xx errors."""
 
-    api_key = os.getenv("MISTRAL_API_KEY")
+    api_key = os.getenv("OPENROUTER_API_KEY")
     if not api_key:
-        raise RuntimeError("MISTRAL_API_KEY is not set")
+        raise RuntimeError("OPENROUTER_API_KEY is not set")
 
-    base_url = os.getenv("MISTRAL_API_BASE", "https://api.mistral.ai/v1")
+    base_url = os.getenv("OPENROUTER_API_BASE", "https://openrouter.ai/api/v1")
     endpoint = f"{base_url.rstrip('/')}/chat/completions"
 
     messages = []
@@ -74,38 +123,51 @@ def generate_code_suggestion(
         messages.append({"role": "system", "content": system_prompt})
     messages.append({"role": "user", "content": user_prompt})
 
-    payload = {
-        "model": model,
-        "messages": messages,
-        "temperature": temperature,
-        "max_tokens": max_tokens,
-    }
+    model_candidates = _next_available_models(_parse_model_candidates(model))
+    if not model_candidates:
+        raise RuntimeError("No model candidates configured")
 
-    _wait_for_rate_limit()
+    response_json: dict[str, object] | None = None
+    last_error: Exception | None = None
 
-    request = urllib.request.Request(
-        endpoint,
-        data=json.dumps(payload).encode("utf-8"),
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {api_key}",
-        },
-        method="POST",
-    )
+    for model_name in model_candidates:
+        payload = {
+            "model": model_name,
+            "messages": messages,
+            "temperature": temperature,
+            "max_tokens": max_tokens,
+        }
 
-    while True:
+        _wait_for_rate_limit()
+
+        request = urllib.request.Request(
+            endpoint,
+            data=json.dumps(payload).encode("utf-8"),
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {api_key}",
+            },
+            method="POST",
+        )
+
         try:
             with urllib.request.urlopen(request, timeout=120) as response:
                 response_json = json.loads(response.read().decode("utf-8"))
             _reset_429_backoff()
             break
         except urllib.error.HTTPError as exc:
-            if exc.code != 429:
-                raise
+            # On provider/model limit or transient server failures, rotate model.
+            if exc.code in {429, 500, 502, 503, 504}:
+                backoff_seconds = _record_429_and_get_backoff_seconds()
+                _mark_model_in_cooldown(model_name, backoff_seconds)
+                last_error = exc
+                continue
+            raise
 
-            backoff_seconds = _record_429_and_get_backoff_seconds()
-            time.sleep(backoff_seconds)
-            _wait_for_rate_limit()
+    if response_json is None:
+        if last_error is not None:
+            raise RuntimeError("All fallback models failed") from last_error
+        raise RuntimeError("No response from OpenRouter")
 
     choices = response_json.get("choices", [])
     if not choices:
