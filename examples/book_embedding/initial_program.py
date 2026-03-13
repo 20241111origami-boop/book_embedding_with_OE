@@ -33,20 +33,25 @@ def _assign_pages(edges, pos):
 
     intervals.sort(key=lambda x: x[1])          # sort by right endpoint
 
-    page_last_right = []                       # rightmost endpoint on each page
+    # For each page, keep the last interval (l_prev, r_prev) in this order.
+    # In right-endpoint order, a new interval (l, r) can be added iff it is
+    # disjoint from the last one (l > r_prev) or it contains the last one
+    # (l <= l_prev). Those two cases are exactly the non-crossing conditions
+    # against all previously placed intervals on that page.
+    page_last_interval = []
     edge_pages = [-1] * len(edges)
 
     for l, r, idx in intervals:
         placed = False
-        for p, last_r in enumerate(page_last_right):
-            if l > last_r or r < last_r:        # disjoint or nested → same page
+        for p, (last_l, last_r) in enumerate(page_last_interval):
+            if l > last_r or l <= last_l:       # disjoint or contains previous
                 edge_pages[idx] = p
-                page_last_right[p] = max(page_last_right[p], r)
+                page_last_interval[p] = (l, r)
                 placed = True
                 break
         if not placed:
-            edge_pages[idx] = len(page_last_right)
-            page_last_right.append(r)
+            edge_pages[idx] = len(page_last_interval)
+            page_last_interval.append((l, r))
 
     return edge_pages
 
